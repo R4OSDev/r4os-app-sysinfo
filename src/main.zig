@@ -125,12 +125,11 @@ fn runReport(app: *const App) bool {
     printSystem(app, &ok);
     printTime(app);
     printHardware(app, &ok);
-    printMemory(app, &ok);
     printDrives(app, &ok);
     printDevices(app, &ok);
     printNetwork(app);
     app.line("");
-    app.line("Details: DMESG, HWDIAG.R4X, BOOTINFO.R4X, MEMVIEW.R4X, DEVMGR.R4X, IPCONFIG.R4X");
+    app.line("Details: SPECTRA METRICS, HWDIAG.R4X, DEVMGR.R4X, IPCONFIG.R4X");
     return ok;
 }
 
@@ -268,58 +267,6 @@ fn printHardware(app: *const App, ok: *bool) void {
     app.line("");
 }
 
-fn printMemory(app: *const App, ok: *bool) void {
-    app.line("");
-    app.line("Memory");
-    if (app.dev.memorySummary()) |mem| {
-        label(app, "Physical RAM");
-        app.writeBytes(mem.physical_bytes);
-        app.line("");
-        label(app, "Free physical");
-        app.writeBytes(mem.free_physical_bytes);
-        app.line("");
-        label(app, "Committed");
-        app.writeBytes(mem.committed_bytes);
-        app.line("");
-        label(app, "Blocks");
-        app.writeDec(mem.active_blocks);
-        app.write(" active, ");
-        app.writeDec(mem.released_blocks);
-        app.write(" released");
-        if (mem.error_blocks != 0) {
-            app.write(", ");
-            app.writeDec(mem.error_blocks);
-            app.write(" errors");
-            ok.* = false;
-        }
-        if (mem.overflow != 0) {
-            app.write(", overflow");
-            ok.* = false;
-        }
-        app.line("");
-        if (app.dev.memoryPressure()) |pressure| {
-            label(app, "Pressure");
-            app.write("level=");
-            app.writeDec(pressure.pressure_level);
-            app.write(" app-avail=");
-            app.writeBytes(pressure.app_available_bytes);
-            app.write(" headroom=");
-            app.writeBytes(pressure.commit_headroom_bytes);
-            app.write(" reclaimable=");
-            app.writeBytes(pressure.reclaimable_bytes);
-            app.line("");
-        } else {
-            label(app, "Pressure");
-            app.line("not available");
-            ok.* = false;
-        }
-        printPaging(app, ok);
-    } else {
-        label(app, "Snapshot");
-        app.line("not available");
-        ok.* = false;
-    }
-}
 
 fn printPaging(app: *const App, ok: *bool) void {
     const paging = app.dev.pagingSummary() orelse {
