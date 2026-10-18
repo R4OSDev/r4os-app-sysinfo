@@ -125,6 +125,7 @@ fn runReport(app: *const App) bool {
     printSystem(app, &ok);
     printTime(app);
     printHardware(app, &ok);
+    @import("cpu_topology.zig").print(&app.sys, &app.dev, &ok);
     printDrives(app, &ok);
     printDevices(app, &ok);
     printNetwork(app);
@@ -262,11 +263,10 @@ fn printHardware(app: *const App, ok: *bool) void {
     app.writeDec(hw.driver_records);
     app.write(" protocols=");
     app.writeDec(hw.protocol_records);
-    app.write(" cpu-logical=");
+    app.write(" cpu-package-bound=");
     app.writeDec(hw.cpu_logical_processors);
     app.line("");
 }
-
 
 fn printPaging(app: *const App, ok: *bool) void {
     const paging = app.dev.pagingSummary() orelse {
