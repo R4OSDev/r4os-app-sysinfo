@@ -81,6 +81,7 @@ const bus_protocol: u8 = 11;
 pub fn r4_app_main(r4_app: *r4os.App) i32 {
     const app = App.init(r4_app) orelse return r4os.abi.err_no_group;
     const args = zSlice(app.sys.argsRaw());
+    if (@import("power_profiles.zig").run(app.sys, args)) |code| return code;
     if (@import("cpu_power.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("cpu_capabilities.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("cpu_lifecycle.zig").run(app.sys, app.dev, args)) |code| return code;
