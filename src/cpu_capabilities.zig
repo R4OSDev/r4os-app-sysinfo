@@ -27,8 +27,8 @@ fn header(sys: r4os.r4sys.Context, cap: a.CpuCapabilitiesInfo) void {
         sys.println(std.fmt.bufPrint(&buffer, "    Hypervisor: {s} bounds={s} maximum=0x{x} raw-maximum=0x{x}", .{ if (text(&cap.hypervisor_name).len != 0) text(&cap.hypervisor_name) else @as([]const u8, "unknown"), if (cap.flags & a.cpu_capabilities_flag_hypervisor_valid != 0) @as([]const u8, "valid") else "unknown/invalid", cap.max_hypervisor_leaf, cap.raw_hypervisor_maximum }) catch "    Hypervisor identity unknown");
     }
     if (cap.flags & a.cpu_capabilities_flag_nominal_frequency != 0) {
-        sys.println(std.fmt.bufPrint(&buffer, "    Nominal MHz: base={d} maximum={d} bus={d}; active frequency unknown", .{ cap.base_mhz, cap.maximum_mhz, cap.bus_mhz }) catch "    Nominal frequency unknown");
-    } else sys.println("    Nominal and active frequency: unknown");
+        sys.println(std.fmt.bufPrint(&buffer, "    Nominal MHz: base={d} maximum={d} bus={d}; active observations: SYSINFO /CPUPOWER", .{ cap.base_mhz, cap.maximum_mhz, cap.bus_mhz }) catch "    Nominal frequency unknown");
+    } else sys.println("    Nominal frequency: unknown; active observations: SYSINFO /CPUPOWER");
 }
 pub fn print(sys: r4os.r4sys.Context, dev: r4os.r4dev.Context) void {
     if (!dev.hasFn("cpu_capabilities")) {

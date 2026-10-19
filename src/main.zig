@@ -81,6 +81,7 @@ const bus_protocol: u8 = 11;
 pub fn r4_app_main(r4_app: *r4os.App) i32 {
     const app = App.init(r4_app) orelse return r4os.abi.err_no_group;
     const args = zSlice(app.sys.argsRaw());
+    if (@import("cpu_power.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("cpu_capabilities.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("cpu_lifecycle.zig").run(app.sys, app.dev, args)) |code| return code;
     const test_mode = argsContain(args, "/TEST") or argsContain(args, "TEST");
@@ -129,6 +130,7 @@ fn runReport(app: *const App) bool {
     printHardware(app, &ok);
     @import("cpu_topology.zig").print(&app.sys, &app.dev, &ok);
     @import("cpu_capabilities.zig").print(app.sys, app.dev);
+    @import("cpu_power.zig").print(app.sys, app.dev);
     printDrives(app, &ok);
     printDevices(app, &ok);
     printNetwork(app);
