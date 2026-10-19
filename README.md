@@ -4,13 +4,22 @@
 
 ## Package
 
-- Version: `0.1.2`
+- Version: `0.1.11`
 - Image target: `/R4OS/SOFTWARE/TERMINAL/SYSINFO.R4X`
 - Image scope: `full`
 - Canonical project manifest: `module.R4MF`
 
 The manifest is the single source of truth for the artifact, imports, image
 target, and package metadata.
+
+`SYSINFO /CPUIDLE:<cpu>` passively reads the independent idle declaration,
+eligibility/rejection reason and software attempts/fallback counters. ACPI
+latency and power values are declared properties. Hardware residency, wake
+latency and energy remain explicitly unavailable without their own readback.
+The query never forces a CPU into a power state.
+The display uses source-specific declarations: `_CST` supplies no minimum
+residency property, `_LPI` supplies no declared power value, and missing or
+invalid declarations are printed as unavailable.
 
 ## Build
 

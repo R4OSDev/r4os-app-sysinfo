@@ -1,7 +1,13 @@
 ﻿SYSINFO.R4X
 ===========
 
-Stand 0.83.2 / Modul 0.1.3
+Stand 0.85.31 / Modul 0.1.11
+
+/CPUIDLE:n liest den separaten passiven CPU-Idlebeleg: Firmwarezustand,
+Zulassungs-/Sperrgrund, genaue CPU-/Providergenerationen und Softwarezaehler.
+Deklarierte Latenz/Leistung und Eintrittsversuche sind keine gemessene
+Residency, Wakezeit oder Energie; diese bleiben ausdruecklich unverfuegbar.
+/CPUFW:n liest weiterhin den getrennten Firmware-Performancebeleg.
 
 Allgemeine Systemidentitaet, Kernel-/Releaseversion, Hardware und Netzwerk. Detaillierte Kernelmessungen liegen jetzt unter SPECTRA METRICS.
 
