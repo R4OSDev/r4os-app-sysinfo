@@ -96,7 +96,9 @@ pub fn run(sys: r4os.r4sys.Context, args: []const u8) ?i32 {
         switch (client.cpu(index, timeout)) {
             .value => |value| {
                 line(sys, "POWERSVC CPU {d}: backend={d} state={s} epoch={d} provider={d} lease={d} revision={d} applied={d} flags=0x{x}", .{ index, value.backend, stateName(value.state), value.cpu_epoch, value.provider_generation, value.lease, value.revision, value.applied_revision, value.flags });
-                line(sys, "  abstract min={d} max={d} desired={d} EPP={d} baseline=0x{x} written=0x{x} observed=0x{x} valid=0x{x} error={d}", .{ value.minimum, value.maximum, value.desired, value.epp, value.baseline_request, value.last_written, value.observed_request, value.valid_mask, value.last_error });
+                if (value.backend >= a.power_profile_backend_acpi_cppc) {
+                    line(sys, "  Firmware parameters: SYSINFO /CPUFW:{d}; raw HWP/CPPC request fields unavailable. valid=0x{x} error={d}", .{ index, value.valid_mask, value.last_error });
+                } else line(sys, "  abstract min={d} max={d} desired={d} EPP={d} baseline=0x{x} written=0x{x} observed=0x{x} valid=0x{x} error={d}", .{ value.minimum, value.maximum, value.desired, value.epp, value.baseline_request, value.last_written, value.observed_request, value.valid_mask, value.last_error });
                 return 0;
             },
             .failure, .remote_failure => |rc| {
