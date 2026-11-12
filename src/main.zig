@@ -1,4 +1,5 @@
 const r4os = @import("r4os");
+const std = @import("std");
 
 const mb: u64 = 1024 * 1024;
 const kb: u64 = 1024;
@@ -7,16 +8,59 @@ const inventory_file_max: usize = 2048;
 const version_unknown = "unknown";
 
 const App = struct {
+    app: *const r4os.App2,
     sys: r4os.r4sys.Context,
     dev: r4os.r4dev.Context,
     net: r4os.r4net.Context,
+    device_records: []r4os.abi.DeviceInventoryRecord = &.{},
+    device_info: r4os.abi.DeviceInventorySnapshotInfo = .{},
+    device_error: ?i32 = null,
 
-    fn init(r4_app: *r4os.App) ?App {
+    fn init(r4_app: *r4os.App2) ?App {
         return .{
+            .app = r4_app,
             .sys = r4_app.system(),
             .dev = r4_app.devicesLowLevel() orelse return null,
             .net = r4_app.networkLowLevel() orelse return null,
         };
+    }
+
+    fn captureDevices(self: *App) !void {
+        const provider = try self.app.deviceSnapshotProvider();
+        var sizing = try r4os.device_snapshot.Snapshot.init(.{}, 0, provider);
+        defer _ = sizing.close() catch {};
+        const needed = try sizing.capture(false);
+        self.device_error = needed.error_code;
+        if (needed.status == @intFromEnum(r4os.device_snapshot.Status.complete)) {
+            self.device_info = needed.info;
+            return;
+        }
+        if (needed.status != @intFromEnum(r4os.device_snapshot.Status.capacity)) return snapshotFailure(needed);
+        self.device_error = null;
+        const records = try self.sys.allocator().alloc(r4os.abi.DeviceInventoryRecord, needed.info.required_count);
+        errdefer self.sys.allocator().free(records);
+        const bytes = std.mem.sliceAsBytes(records);
+        var snapshot = try r4os.device_snapshot.Snapshot.init(.{ .address = @intFromPtr(bytes.ptr), .length = bytes.len }, @intCast(records.len), provider);
+        defer _ = snapshot.close() catch {};
+        const progress = try snapshot.capture(false);
+        self.device_error = progress.error_code;
+        if (progress.status != @intFromEnum(r4os.device_snapshot.Status.complete)) return snapshotFailure(progress);
+        self.device_info = progress.info;
+        self.device_records = records;
+    }
+
+    fn inventorySummary(self: *const App) r4os.abi.DeviceInventorySummary {
+        return .{
+            .total = self.device_info.count,
+            .with_driver = self.device_info.with_driver,
+            .without_driver = self.device_info.without_driver,
+            .unknown = self.device_info.unknown,
+        };
+    }
+
+    fn deinit(self: *App) void {
+        self.sys.allocator().free(self.device_records);
+        self.device_records = &.{};
     }
 
     fn write(self: *const App, text: []const u8) void {
@@ -78,15 +122,25 @@ const bus_storage: u8 = 4;
 const bus_usb: u8 = 10;
 const bus_protocol: u8 = 11;
 
-pub fn r4_app_main(r4_app: *r4os.App) i32 {
-    const app = App.init(r4_app) orelse return r4os.abi.err_no_group;
-    const args = zSlice(app.sys.argsRaw());
+pub fn r4_app_main(r4_app: *r4os.App2) i32 {
+    var app = App.init(r4_app) orelse return r4os.abi.err_no_group;
+    defer app.deinit();
+    const args = r4_app.args();
     if (@import("firmware_power.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("idle.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("power_profiles.zig").run(app.sys, args)) |code| return code;
     if (@import("cpu_power.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("cpu_capabilities.zig").run(app.sys, app.dev, args)) |code| return code;
     if (@import("cpu_lifecycle.zig").run(app.sys, app.dev, args)) |code| return code;
+    app.captureDevices() catch |err| {
+        app.write("SYSINFO device snapshot failed ");
+        app.write(@errorName(err));
+        app.write(" code=");
+        if (app.device_error) |code| app.sys.printI32(code) else app.write("unknown");
+        app.line("");
+        app.line("SYSINFO result: FAILED");
+        return 1;
+    };
     const test_mode = argsContain(args, "/TEST") or argsContain(args, "TEST");
     const driver_mode = argsContain(args, "/DRIVERS") or argsContain(args, "DRIVERS");
     const storage_mode = argsContain(args, "/STORAGE") or argsContain(args, "STORAGE");
@@ -162,8 +216,8 @@ fn printSystem(app: *const App, ok: *bool) void {
         if (r4os.version_info.restartRequired(value, installed)) app.write(" (restart required)");
     }
     app.line("");
-    label(app, "R4SYS ABI");
-    app.write("v");
+    label(app, "R4SYS Query2");
+    app.write("table v");
     app.writeDec(app.sys.tableAbiVersion());
     app.write(" size=");
     app.writeDec(app.sys.tableSize());
@@ -349,19 +403,10 @@ fn printDrives(app: *const App, ok: *bool) void {
 fn printDevices(app: *const App, ok: *bool) void {
     app.line("");
     app.line("Devices");
-    var summary: r4os.abi.DeviceInventorySummary = .{};
-    if (app.dev.deviceInventorySummary(&summary) <= 0) {
-        label(app, "Inventory");
-        app.line("not available");
-        ok.* = false;
-        return;
-    }
+    const summary = app.inventorySummary();
 
     var counts = DeviceCounts{};
-    var index: u32 = 0;
-    while (index < summary.total) : (index += 1) {
-        var rec: r4os.abi.DeviceInventoryRecord = .{};
-        if (app.dev.deviceInventoryRecord(index, &rec) <= 0) continue;
+    for (app.device_records[0..summary.total]) |rec| {
         switch (rec.class_code) {
             0x01 => counts.storage += 1,
             0x02 => counts.network += 1,
@@ -399,21 +444,13 @@ fn printDevices(app: *const App, ok: *bool) void {
 fn runDriverRegistrySelftest(app: *const App) bool {
     app.line("SYSINFO driver registry selftest");
 
-    var summary: r4os.abi.DeviceInventorySummary = .{};
-    if (app.dev.deviceInventorySummary(&summary) <= 0) {
-        app.line("SYSINFO drivers inventory: not available");
-        app.line("SYSINFO driver registry: failed");
-        return false;
-    }
+    const summary = app.inventorySummary();
 
     var driver_records: u32 = 0;
     var active_r4d: u32 = 0;
     var failed_records: u32 = 0;
 
-    var index: u32 = 0;
-    while (index < summary.total) : (index += 1) {
-        var rec: r4os.abi.DeviceInventoryRecord = .{};
-        if (app.dev.deviceInventoryRecord(index, &rec) <= 0) continue;
+    for (app.device_records[0..summary.total]) |rec| {
         if (rec.bus != bus_driver) continue;
 
         driver_records += 1;
@@ -453,12 +490,7 @@ fn runDriverRegistrySelftest(app: *const App) bool {
 fn runStorageSelftest(app: *const App) bool {
     app.line("SYSINFO storage selftest");
 
-    var summary: r4os.abi.DeviceInventorySummary = .{};
-    if (app.dev.deviceInventorySummary(&summary) <= 0) {
-        app.line("SYSINFO storage inventory: not available");
-        app.line("SYSINFO storage: failed");
-        return false;
-    }
+    const summary = app.inventorySummary();
 
     var storage_records: u32 = 0;
     var block_records: u32 = 0;
@@ -467,10 +499,7 @@ fn runStorageSelftest(app: *const App) bool {
     var mounted_data: u32 = 0;
     var builtin_blocks: u32 = 0;
 
-    var index: u32 = 0;
-    while (index < summary.total) : (index += 1) {
-        var rec: r4os.abi.DeviceInventoryRecord = .{};
-        if (app.dev.deviceInventoryRecord(index, &rec) <= 0) continue;
+    for (app.device_records[0..summary.total]) |rec| {
         if (rec.bus != bus_storage) continue;
         storage_records += 1;
 
@@ -522,12 +551,7 @@ fn runStorageSelftest(app: *const App) bool {
 fn runUsbHidSelftest(app: *const App) bool {
     app.line("SYSINFO USB-HID selftest");
 
-    var summary: r4os.abi.DeviceInventorySummary = .{};
-    if (app.dev.deviceInventorySummary(&summary) <= 0) {
-        app.line("SYSINFO usbhid inventory: not available");
-        app.line("SYSINFO usbhid: failed");
-        return false;
-    }
+    const summary = app.inventorySummary();
 
     var hid_report_source: u8 = protocol_source_none;
     var hid_boot_source: u8 = protocol_source_none;
@@ -536,10 +560,7 @@ fn runUsbHidSelftest(app: *const App) bool {
     var keyboard_ok = true;
     var mouse_ok = true;
 
-    var index: u32 = 0;
-    while (index < summary.total) : (index += 1) {
-        var rec: r4os.abi.DeviceInventoryRecord = .{};
-        if (app.dev.deviceInventoryRecord(index, &rec) <= 0) continue;
+    for (app.device_records[0..summary.total]) |rec| {
         if (isR4pProtocolRecord(rec, "usb.hid_report")) hid_report_source = protocolRecordSource(rec);
         if (isR4pProtocolRecord(rec, "usb.hid_boot")) hid_boot_source = protocolRecordSource(rec);
         if (isUsbHidKeyboardRecord(rec)) {
@@ -600,22 +621,14 @@ fn printUsbHidRecordLine(app: *const App, kind: []const u8, rec: r4os.abi.Device
 fn runUsbMscSelftest(app: *const App) bool {
     app.line("SYSINFO USBMSC selftest");
 
-    var summary: r4os.abi.DeviceInventorySummary = .{};
-    if (app.dev.deviceInventorySummary(&summary) <= 0) {
-        app.line("SYSINFO usbmsc inventory: not available");
-        app.line("SYSINFO usbmsc: failed");
-        return false;
-    }
+    const summary = app.inventorySummary();
 
     var bot_source: u8 = protocol_source_none;
     var scsi_source: u8 = protocol_source_none;
     var storage_count: u32 = 0;
     var storage_ok = true;
 
-    var index: u32 = 0;
-    while (index < summary.total) : (index += 1) {
-        var rec: r4os.abi.DeviceInventoryRecord = .{};
-        if (app.dev.deviceInventoryRecord(index, &rec) <= 0) continue;
+    for (app.device_records[0..summary.total]) |rec| {
         if (isR4pProtocolRecord(rec, "usb.msc_bot")) bot_source = protocolRecordSource(rec);
         if (isR4pProtocolRecord(rec, "usb.scsi_block")) scsi_source = protocolRecordSource(rec);
         if (isUsbMscRecord(rec)) {
@@ -715,17 +728,29 @@ fn label(app: *const App, text: []const u8) void {
 }
 
 fn releaseVersion(app: *const App, scratch: []u8) []const u8 {
-    const read = app.sys.fileRead(r4os.version_info.release_file_path, scratch);
-    if (read <= 0) return version_unknown;
-    const len: usize = @intCast(read);
-    return r4os.version_info.parseReleaseVersion(scratch[0..len]) orelse version_unknown;
+    const files = app.app.files() orelse return version_unknown;
+    const result = switch (files.readDocumentPrefix(.{
+        .ptr = r4os.version_info.release_file_path,
+        .len = r4os.version_info.release_file_path.len,
+    }, scratch, r4os.time_contract.timeoutFinite(.{ .nanoseconds = 5_000_000_000 }))) {
+        .value => |value| value,
+        .failure => return version_unknown,
+    };
+    if (result.bytes == 0 or result.file_size != result.bytes) return version_unknown;
+    return r4os.version_info.parseReleaseVersion(scratch[0..result.bytes]) orelse version_unknown;
 }
 
 fn installedKernelVersion(app: *const App, scratch: []u8) []const u8 {
-    const read = app.sys.fileReadAt(r4os.version_info.inventory_file_path, 0, scratch);
-    if (read <= 0) return version_unknown;
-    const len: usize = @intCast(read);
-    return r4os.version_info.parseInstalledKernelVersion(scratch[0..len]) orelse version_unknown;
+    const files = app.app.files() orelse return version_unknown;
+    const result = switch (files.readDocumentPrefix(.{
+        .ptr = r4os.version_info.inventory_file_path,
+        .len = r4os.version_info.inventory_file_path.len,
+    }, scratch, r4os.time_contract.timeoutFinite(.{ .nanoseconds = 5_000_000_000 }))) {
+        .value => |value| value,
+        .failure => return version_unknown,
+    };
+    if (result.bytes == 0) return version_unknown;
+    return r4os.version_info.parseInstalledKernelVersion(scratch[0..result.bytes]) orelse version_unknown;
 }
 
 fn writeDateTime(app: *const App, time: r4os.abi.TimeState) void {
@@ -963,4 +988,14 @@ fn equalsIgnoreCase(a: []const u8, b: []const u8) bool {
 fn asciiUpper(ch: u8) u8 {
     if (ch >= 'a' and ch <= 'z') return ch - 32;
     return ch;
+}
+
+fn snapshotFailure(progress: r4os.device_snapshot.Progress) anyerror {
+    return switch (@as(r4os.device_snapshot.Status, @enumFromInt(progress.status))) {
+        .no_provider => error.NoProvider,
+        .capacity => error.InventoryChanged,
+        .cancelled => error.Cancelled,
+        .invalid_provider => error.InvalidProvider,
+        else => error.DeviceSnapshotFailed,
+    };
 }
